@@ -35,7 +35,7 @@ services:
 networks:
   registry:
     external: true
-  uppliers_network:
+  suppliers_network:
     external: true
   customers_network:
     external: true
