@@ -1,0 +1,44 @@
+version: '3.8'
+services:
+  nginx:
+    image: nginx:latest
+    container_name: nginx_proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-config:/etc/nginx/conf.d
+      - ./letsencrypt:/etc/letsencrypt
+      - ./html:/usr/share/nginx/html
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - registry
+      - suppliers_network
+      - customers_network
+      - internal_network
+    restart: always
+
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h; done;'"
+    volumes:
+      - ./letsencrypt:/etc/letsencrypt
+      - ./nginx-config:/etc/nginx/conf.d
+    networks:
+      - registry
+      - suppliers_network
+      - customers_network
+      - internal_network
+    restart: always
+
+networks:
+  registry:
+    external: true
+  uppliers_network:
+    external: true
+  customers_network:
+    external: true
+  internal_network:
+    external: true
+
