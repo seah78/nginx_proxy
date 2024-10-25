@@ -75,7 +75,19 @@ server {
 
 Utiliser la commande suivante pour générer le certificat SSL pour le domaine
 
-`docker run --rm -v $(pwd)/letsencrypt:/etc/letsencrypt -v $(pwd)/nginx-config:/etc/nginx/conf.d -v $(pwd)/html:/usr/share/nginx/html certbot/certbot certonly --webroot --webroot-path=/usr/share/nginx/html -d mondomaine.com --email monemail@mondomaine.com --agree-tos --non-interactive`
+```
+docker run --rm \
+    -v $(pwd)/letsencrypt:/etc/letsencrypt \
+    -v $(pwd)/nginx-config:/etc/nginx/conf.d \
+    -v $(pwd)/html:/usr/share/nginx/html \
+    certbot/certbot certonly --webroot \
+    --webroot-path=/usr/share/nginx/html \
+    -d mondomaine.com \
+    --email email@mondomaine.com \
+    --agree-tos \
+    --non-interactive
+
+```
 
 *Commande à utiliser pour chaque domaine à configurer*
 
