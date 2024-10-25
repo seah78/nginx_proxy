@@ -25,7 +25,7 @@ Les certificats SSL sont stockés dans le dossier letsencrypt.
 
 Cloner le repository sur le VPS ou le Serveur dédié
 
-`git clone https://github.com/J2S-Just-Simple-Solutions/nginx_proxy`
+`git clone https://github.com/seah78/nginx_proxy`
 
 Se positionner dans le dossier du projet
 
