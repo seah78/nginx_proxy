@@ -30,8 +30,6 @@ services:
     restart: always
 
 networks:
-  registry:
-    external: true
   suppliers_network:
     external: true
   customers_network:
