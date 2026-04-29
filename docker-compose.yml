@@ -28,7 +28,7 @@ services:
       - customers_network
       - internal_network
     restart: always
-
+      
 networks:
   suppliers_network:
     external: true

@@ -2,57 +2,127 @@
 
 [![forthebadge](https://forthebadge.com/images/badges/docker-container.svg)](https://forthebadge.com)
 
-## Objectif : 
-Gérer les redirections vers les différentes images docker et générer les certificats SSL pour les différents container.
+# Reverse Proxy Nginx + Let's Encrypt (Certbot)
 
-## Containers de ce projet :
-Nginx gère le système de redirection par l'intermédiaire des fichiers de configuration.
+## Objectif
 
-Certbot gère la création et le renouvellement des cetificats SSL.
+Ce projet fournit :
 
-## Arborescence
-Les fichiers de configuration sont stockés dans le dossier nginx-config
+- un reverse proxy Nginx pour router plusieurs sites/applications Docker
+- la génération automatique de certificats SSL Let's Encrypt
+- le renouvellement automatique des certificats via Certbot
+- l’isolation réseau entre les différents projets Docker
 
-Les certificats SSL sont stockés dans le dossier letsencrypt.
+---
 
-## Pré-requis
+# Architecture
 
-- Terminal
-- VPS ou Serveur Dédié
-- Docker et docker-compose installé sur le système
+## Containers
 
-## Installation et démarrage
+### nginx_proxy
+Gère :
 
-Cloner le repository sur le VPS ou le Serveur dédié
+- Reverse proxy vers les différents containers applicatifs
+- Redirection HTTP → HTTPS
+- Terminaison SSL/TLS
+- Validation ACME pour Let's Encrypt
 
-`git clone https://github.com/seah78/nginx_proxy`
+### certbot
+Gère :
 
-Se positionner dans le dossier du projet
+- Création des certificats
+- Renouvellement automatique toutes les 12 heures
 
-`cd nginx-proxy`
+---
 
-Créer les réseaux
+# Arborescence
 
+```bash
+nginx_proxy/
+├── docker-compose.yml
+├── nginx-config/
+│   ├── site1.conf
+│   └── site2.conf
+├── letsencrypt/
+├── html/
+└── README.md
 ```
-docker network create registry
+
+## Volumes
+
+### Configurations Nginx
+```bash
+./nginx-config
+```
+
+### Certificats SSL
+```bash
+./letsencrypt
+```
+
+### Webroot ACME challenge
+```bash
+./html
+```
+
+---
+
+# Pré-requis
+
+- VPS / serveur dédié
+- Docker installé
+- Docker Compose plugin (`docker compose`)
+- Domaines pointant vers le serveur
+- Ports ouverts :
+- 80/tcp
+- 443/tcp
+
+---
+
+# Installation
+
+## Cloner le projet
+
+```bash
+git clone https://github.com/seah78/nginx_proxy.git
+cd nginx_proxy
+```
+
+---
+
+## Créer les réseaux Docker externes
+
+```bash
 docker network create suppliers_network
 docker network create customers_network
 docker network create internal_network
 ```
 
-Démarrer le container
+---
 
-`docker-compose up -d`
+## Démarrer les services
 
-## Configuration initiale
-
-Se positionner dans le nginx-conf et créer un fichier de configuration initial pour la génération du certificat SSL.
-
-`nano monfichier1.conf`
-
-Utiliser la nomenclature suivante :
-
+```bash
+docker compose up -d
 ```
+
+Vérifier :
+
+```bash
+docker ps
+```
+
+---
+
+# Configuration initiale (obtention du certificat)
+
+Créer un vhost temporaire :
+
+```bash
+nano nginx-config/mondomaine.conf
+```
+
+```nginx
 server {
     listen 80;
     server_name mondomaine.com;
@@ -62,48 +132,52 @@ server {
     }
 
     location / {
-        if ($scheme != "https") {
-            return 301 https://$host$request_uri;
-        }
+        return 301 https://$host$request_uri;
     }
 }
 ```
 
-*Générer autant de fichier de conf qu'il y a de domaine à configurer*
+Tester :
 
-## Génération du certificat SSL
-
-Utiliser la commande suivante pour générer le certificat SSL pour le domaine
-
+```bash
+docker exec nginx_proxy nginx -t
 ```
+
+Puis recharger :
+
+```bash
+docker restart nginx_proxy
+```
+
+---
+
+# Génération du certificat SSL
+
+```bash
 docker run --rm \
-    -v $(pwd)/letsencrypt:/etc/letsencrypt \
-    -v $(pwd)/nginx-config:/etc/nginx/conf.d \
-    -v $(pwd)/html:/usr/share/nginx/html \
-    certbot/certbot certonly --webroot \
-    --webroot-path=/usr/share/nginx/html \
-    -d mondomaine.com \
-    --email email@mondomaine.com \
-    --agree-tos \
-    --non-interactive
-
+-v $(pwd)/letsencrypt:/etc/letsencrypt \
+-v $(pwd)/html:/usr/share/nginx/html \
+certbot/certbot certonly --webroot \
+--webroot-path=/usr/share/nginx/html \
+-d mondomaine.com \
+--email email@mondomaine.com \
+--agree-tos \
+--non-interactive
 ```
 
-*Commande à utiliser pour chaque domaine à configurer*
+Répéter pour chaque domaine.
 
-Redémarrer Nginx
+---
 
-`docker restart nginx_proxy`
+# Configuration finale
 
-## Configuration finale
+Modifier :
 
-Modifier le fichier de configuration
-
-`nano monfichier1.conf`
-
-Utiliser la nomenclature suivante :
-
+```bash
+nano nginx-config/mondomaine.conf
 ```
+
+```nginx
 server {
     listen 80;
     server_name mondomaine.com;
@@ -112,15 +186,12 @@ server {
         root /usr/share/nginx/html;
     }
 
-    location / {
-        if ($scheme != "https") {
-            return 301 https://$host$request_uri;
-        }
-    }
+    return 301 https://$host$request_uri;
 }
 
+
 server {
-    listen 443 ssl;
+    listen 443 ssl http2;
     server_name mondomaine.com;
 
     ssl_certificate /etc/letsencrypt/live/mondomaine.com/fullchain.pem;
@@ -128,18 +199,98 @@ server {
 
     location / {
         proxy_pass http://container-projet:port;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
-Redémarrer Nginx
+Tester :
 
-`docker restart nginx_proxy`
+```bash
+docker exec nginx_proxy nginx -t
+```
 
-## Auteurs
+Puis :
+
+```bash
+docker restart nginx_proxy
+```
+
+---
+
+# Renouvellement automatique
+
+Aucune action manuelle nécessaire.
+
+Le container Certbot exécute automatiquement :
+
+```bash
+certbot renew
+```
+
+toutes les 12 heures.
+
+Vérification :
+
+```bash
+docker logs certbot
+```
+
+Test manuel :
+
+```bash
+docker exec certbot certbot renew --dry-run
+```
+
+---
+
+# Ajouter un nouveau projet
+
+1. Connecter le container applicatif à un des réseaux :
+
+```yaml
+networks:
+  - internal_network
+```
+
+2. Créer son vhost Nginx
+
+3. Générer le certificat
+
+4. Recharger Nginx
+
+---
+
+# Dépannage
+
+Tester config :
+
+```bash
+docker exec nginx_proxy nginx -t
+```
+
+Logs Nginx :
+
+```bash
+docker logs nginx_proxy
+```
+
+Logs Certbot :
+
+```bash
+docker logs certbot
+```
+
+---
+
+# Auteur
 
 [![forthebadge](https://forthebadge.com/images/badges/built-by-developers.svg)](https://forthebadge.com)
 
-### Sébastien HERLANT 
+**Sébastien HERLANT**
 
 
