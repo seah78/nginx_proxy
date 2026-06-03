@@ -10,6 +10,7 @@ services:
       - ./nginx-config:/etc/nginx/conf.d
       - ./letsencrypt:/etc/letsencrypt
       - ./html:/usr/share/nginx/html
+      - webapps_media:/srv/webapps-media:ro
     networks:
       - suppliers_network
       - customers_network
@@ -35,5 +36,9 @@ networks:
   customers_network:
     external: true
   internal_network:
+    external: true
+
+volumes:
+  webapps_media:
     external: true
 
