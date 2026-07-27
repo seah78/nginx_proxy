@@ -1,104 +1,50 @@
 # nginx_proxy
 
-[![forthebadge](https://forthebadge.com/images/badges/docker-container.svg)](https://forthebadge.com)
+Reverse proxy Nginx mutualisé avec certificats Let's Encrypt pour des
+applications Docker.
 
-# Reverse Proxy Nginx + Let's Encrypt (Certbot)
+## Fonctionnalités
 
-## Objectif
+- reverse proxy vers plusieurs applications Docker ;
+- redirection HTTP vers HTTPS ;
+- terminaison TLS ;
+- validation ACME HTTP-01 ;
+- renouvellement périodique des certificats avec Certbot ;
+- partage optionnel des médias Django.
 
-Ce projet fournit :
+## Prérequis
 
-- un reverse proxy Nginx pour router plusieurs sites/applications Docker
-- la génération automatique de certificats SSL Let's Encrypt
-- le renouvellement automatique des certificats via Certbot
-- l’isolation réseau entre les différents projets Docker
+- un serveur Linux ;
+- Docker et le plugin Docker Compose ;
+- les ports TCP 80 et 443 ouverts en IPv4 et, si un enregistrement DNS `AAAA`
+  est publié, en IPv6 ;
+- les domaines pointant vers le serveur.
 
----
+## Emplacement d'installation
 
-# Architecture
-
-## Containers
-
-### nginx_proxy
-Gère :
-
-- Reverse proxy vers les différents containers applicatifs
-- Redirection HTTP → HTTPS
-- Terminaison SSL/TLS
-- Validation ACME pour Let's Encrypt
-
-### certbot
-Gère :
-
-- Création des certificats
-- Renouvellement automatique toutes les 12 heures
-
----
-
-# Arborescence
+Ce projet doit être installé dans `/opt/nginx_proxy`, car `adminnginx` utilise
+ce chemin pour accéder aux configurations, certificats et challenges ACME.
 
 ```bash
-nginx_proxy/
+cd /opt
+git clone https://github.com/seah78/nginx_proxy.git
+cd /opt/nginx_proxy
+```
+
+Structure attendue :
+
+```text
+/opt/nginx_proxy/
 ├── docker-compose.yml
 ├── nginx-config/
-│   ├── site1.conf
-│   └── site2.conf
 ├── letsencrypt/
 ├── html/
 └── README.md
 ```
 
-## Volumes
+## Préparation Docker
 
-### Configurations Nginx
-```bash
-./nginx-config
-```
-
-### Certificats SSL
-```bash
-./letsencrypt
-```
-
-### Webroot ACME challenge
-```bash
-./html
-```
-
----
-
-# Pré-requis
-
-- VPS / serveur dédié
-- Docker installé
-- Docker Compose plugin (`docker compose`)
-- Domaines pointant vers le serveur
-- Ports ouverts :
-- 80/tcp
-- 443/tcp
-
----
-
-# Installation
-
-> **Permissions Docker**
->
-> Si votre utilisateur n’a pas accès au socket Docker (`permission denied` sur
-> `/var/run/docker.sock`), préfixez les commandes Docker ci-dessous par `sudo`.
-> Utilisez le même mode pour toutes les commandes, par exemple
-> `sudo docker network create ...`, `sudo docker volume create ...` et
-> `sudo docker compose up -d`.
-
-## Cloner le projet
-
-```bash
-git clone https://github.com/seah78/nginx_proxy.git
-cd nginx_proxy
-```
-
----
-
-## Créer les réseaux Docker externes
+Créer les réseaux externes nécessaires :
 
 ```bash
 docker network create suppliers_network
@@ -106,45 +52,106 @@ docker network create customers_network
 docker network create internal_network
 ```
 
----
+Une erreur indiquant qu'un réseau existe déjà peut être ignorée.
 
-## Créer le volume Docker externe
-
-Le volume `webapps_media` est partagé avec les applications web et doit exister
-avant le démarrage de cette stack :
+Créer le volume partagé destiné aux médias :
 
 ```bash
 docker volume create webapps_media
 ```
 
----
-
-## Démarrer les services
+Créer les répertoires persistants :
 
 ```bash
+sudo mkdir -p /opt/nginx_proxy/nginx-config
+sudo mkdir -p /opt/nginx_proxy/letsencrypt
+sudo mkdir -p /opt/nginx_proxy/html
+```
+
+## Docker Compose
+
+```yaml
+services:
+  nginx:
+    image: nginx:latest
+    container_name: nginx_proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-config:/etc/nginx/conf.d
+      - ./letsencrypt:/etc/letsencrypt
+      - ./html:/usr/share/nginx/html
+      - webapps_media:/srv/webapps-media:ro
+    networks:
+      - suppliers_network
+      - customers_network
+      - internal_network
+    restart: always
+
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    entrypoint: >-
+      /bin/sh -c 'trap exit TERM;
+      while :; do
+      certbot renew --webroot -w /usr/share/nginx/html;
+      sleep 12h;
+      done;'
+    volumes:
+      - ./letsencrypt:/etc/letsencrypt
+      - ./html:/usr/share/nginx/html
+    networks:
+      - suppliers_network
+      - customers_network
+      - internal_network
+    restart: always
+
+networks:
+  suppliers_network:
+    external: true
+  customers_network:
+    external: true
+  internal_network:
+    external: true
+
+volumes:
+  webapps_media:
+    external: true
+```
+
+Démarrer les services depuis le répertoire du projet :
+
+```bash
+cd /opt/nginx_proxy
 docker compose up -d
 ```
 
-Vérifier :
+Vérifier les conteneurs et les ports publiés :
 
 ```bash
-docker ps
+docker ps --filter name=nginx_proxy
+docker ps --filter name=certbot
 ```
 
----
+## Création du vhost HTTP
 
-# Configuration initiale (obtention du certificat)
-
-Créer un vhost temporaire :
+Le nom du fichier doit obligatoirement se terminer par `.conf`, car Nginx
+charge `/etc/nginx/conf.d/*.conf`.
 
 ```bash
-nano nginx-config/mondomaine.conf
+sudo nano \
+  /opt/nginx_proxy/nginx-config/admin.example.com.conf
 ```
+
+Configuration temporaire :
 
 ```nginx
 server {
     listen 80;
-    server_name mondomaine.com;
+    listen [::]:80;
+
+    server_name admin.example.com;
 
     location /.well-known/acme-challenge/ {
         root /usr/share/nginx/html;
@@ -156,104 +163,160 @@ server {
 }
 ```
 
-Tester :
+Tester puis recharger :
 
 ```bash
 docker exec nginx_proxy nginx -t
+docker exec nginx_proxy nginx -s reload
 ```
 
-Puis recharger :
+## Validation du webroot
+
+Avant de lancer Certbot, vérifier que le même fichier est visible sur l'hôte,
+dans Nginx et depuis Internet :
 
 ```bash
-docker restart nginx_proxy
+sudo mkdir -p \
+  /opt/nginx_proxy/html/.well-known/acme-challenge
+
+echo "test-acme" |
+sudo tee /opt/nginx_proxy/html/.well-known/acme-challenge/test
 ```
 
----
+```bash
+docker exec nginx_proxy \
+  cat /usr/share/nginx/html/.well-known/acme-challenge/test
+```
 
-# Génération du certificat SSL
+```bash
+curl -4 \
+  http://admin.example.com/.well-known/acme-challenge/test
+```
+
+Les deux commandes doivent afficher `test-acme`.
+
+Si le domaine publie un enregistrement `AAAA`, tester également IPv6 :
+
+```bash
+curl -6 \
+  http://admin.example.com/.well-known/acme-challenge/test
+```
+
+Let's Encrypt privilégie IPv6 lorsqu'un enregistrement `AAAA` existe. Ne
+publier cet enregistrement que si le port 80 est réellement accessible en
+IPv6.
+
+## Création du certificat
+
+Utiliser des chemins absolus afin que la commande reste correcte quel que soit
+le répertoire courant :
 
 ```bash
 docker run --rm \
--v $(pwd)/letsencrypt:/etc/letsencrypt \
--v $(pwd)/html:/usr/share/nginx/html \
-certbot/certbot certonly --webroot \
---webroot-path=/usr/share/nginx/html \
--d mondomaine.com \
---email email@mondomaine.com \
---agree-tos \
---non-interactive
+  -v /opt/nginx_proxy/letsencrypt:/etc/letsencrypt \
+  -v /opt/nginx_proxy/html:/usr/share/nginx/html \
+  certbot/certbot certonly --webroot \
+  --webroot-path=/usr/share/nginx/html \
+  -d admin.example.com \
+  --email admin@example.com \
+  --agree-tos \
+  --non-interactive
 ```
 
-Répéter pour chaque domaine.
-
----
-
-# Configuration finale
-
-Modifier :
+Vérifier le certificat :
 
 ```bash
-nano nginx-config/mondomaine.conf
+sudo openssl x509 \
+  -in /opt/nginx_proxy/letsencrypt/live/admin.example.com/fullchain.pem \
+  -noout -subject -issuer -dates
 ```
+
+## Activation HTTPS
+
+Remplacer le vhost temporaire par :
 
 ```nginx
 server {
     listen 80;
-    server_name mondomaine.com;
+    listen [::]:80;
+
+    server_name admin.example.com;
 
     location /.well-known/acme-challenge/ {
         root /usr/share/nginx/html;
     }
 
-    return 301 https://$host$request_uri;
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
-
 server {
-    listen 443 ssl http2;
-    server_name mondomaine.com;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
 
-    ssl_certificate /etc/letsencrypt/live/mondomaine.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/mondomaine.com/privkey.pem;
+    server_name admin.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/admin.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://container-projet:port;
+        proxy_pass http://application:8000;
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
     }
 }
 ```
 
-Tester :
+Le conteneur applicatif doit partager au moins un réseau Docker avec
+`nginx_proxy`.
+
+Tester et appliquer :
 
 ```bash
 docker exec nginx_proxy nginx -t
+docker exec nginx_proxy nginx -s reload
+curl -I https://admin.example.com
 ```
 
-Puis :
+## Médias Django
 
-```bash
-docker restart nginx_proxy
+Le conteneur Django doit monter le volume externe :
+
+```yaml
+services:
+  application:
+    volumes:
+      - webapps_media:/app/media
+
+volumes:
+  webapps_media:
+    external: true
 ```
 
----
+Configuration Django :
 
-# Renouvellement automatique
-
-Aucune action manuelle nécessaire.
-
-Le container Certbot exécute automatiquement :
-
-```bash
-certbot renew
+```python
+MEDIA_URL = "/media/"
+MEDIA_ROOT = "/app/media"
 ```
 
-toutes les 12 heures.
+Bloc à ajouter au vhost HTTPS :
 
-Vérification :
+```nginx
+location /media/ {
+    alias /srv/webapps-media/;
+    autoindex off;
+}
+```
+
+## Renouvellement
+
+Le conteneur Certbot vérifie les certificats toutes les 12 heures :
 
 ```bash
 docker logs certbot
@@ -265,50 +328,62 @@ Test manuel :
 docker exec certbot certbot renew --dry-run
 ```
 
----
-
-# Ajouter un nouveau projet
-
-1. Connecter le container applicatif à un des réseaux :
-
-```yaml
-networks:
-  - internal_network
-```
-
-2. Créer son vhost Nginx
-
-3. Générer le certificat
-
-4. Recharger Nginx
-
----
-
-# Dépannage
-
-Tester config :
+Important : `certbot renew` remplace les fichiers sur disque, mais Nginx doit
+ensuite être rechargé pour présenter le nouveau certificat :
 
 ```bash
 docker exec nginx_proxy nginx -t
+docker exec nginx_proxy nginx -s reload
 ```
 
-Logs Nginx :
+Le Compose présenté ci-dessus ne déclenche pas automatiquement ce rechargement
+inter-conteneurs. Il faut ajouter un mécanisme de rechargement automatique ou
+effectuer cette opération après chaque renouvellement.
+
+## Dépannage
+
+Afficher la configuration réellement chargée :
 
 ```bash
+docker exec nginx_proxy nginx -T
+```
+
+Si aucun `listen` ou `server_name` n'apparaît, vérifier que les fichiers de
+`nginx-config` se terminent par `.conf`.
+
+Afficher les montages :
+
+```bash
+docker inspect nginx_proxy \
+  --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
+```
+
+Les montages attendus commencent par :
+
+```text
+/opt/nginx_proxy/nginx-config -> /etc/nginx/conf.d
+/opt/nginx_proxy/letsencrypt -> /etc/letsencrypt
+/opt/nginx_proxy/html -> /usr/share/nginx/html
+```
+
+Si un répertoire bind-mounté est supprimé puis recréé pendant que les
+conteneurs fonctionnent, recréer les conteneurs :
+
+```bash
+cd /opt/nginx_proxy
+docker compose down
+docker compose up -d
+```
+
+Autres commandes utiles :
+
+```bash
+docker exec nginx_proxy nginx -t
 docker logs nginx_proxy
-```
-
-Logs Certbot :
-
-```bash
 docker logs certbot
+sudo ss -lntp | grep -E ':(80|443)[[:space:]]'
 ```
 
----
-
-# Auteur
-
-[![forthebadge](https://forthebadge.com/images/badges/built-by-developers.svg)](https://forthebadge.com)
+## Auteur
 
 **Sébastien HERLANT**
-
