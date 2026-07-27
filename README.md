@@ -81,6 +81,14 @@ nginx_proxy/
 
 # Installation
 
+> **Permissions Docker**
+>
+> Si votre utilisateur n’a pas accès au socket Docker (`permission denied` sur
+> `/var/run/docker.sock`), préfixez les commandes Docker ci-dessous par `sudo`.
+> Utilisez le même mode pour toutes les commandes, par exemple
+> `sudo docker network create ...`, `sudo docker volume create ...` et
+> `sudo docker compose up -d`.
+
 ## Cloner le projet
 
 ```bash
@@ -96,6 +104,17 @@ cd nginx_proxy
 docker network create suppliers_network
 docker network create customers_network
 docker network create internal_network
+```
+
+---
+
+## Créer le volume Docker externe
+
+Le volume `webapps_media` est partagé avec les applications web et doit exister
+avant le démarrage de cette stack :
+
+```bash
+docker volume create webapps_media
 ```
 
 ---
@@ -292,5 +311,4 @@ docker logs certbot
 [![forthebadge](https://forthebadge.com/images/badges/built-by-developers.svg)](https://forthebadge.com)
 
 **Sébastien HERLANT**
-
 
